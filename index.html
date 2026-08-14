@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>太陽系模擬</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tween.js/18.6.4/tween.umd.js"></script>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000;
+        }
+        #info {
+            position: absolute;
+            bottom: 10px;
+            width: 100%;
+            text-align: center;
+            color: white;
+            font-family: Arial, sans-serif;
+        }
+        #planetInfo {
+            position: absolute;
+            padding: 8px;
+            background-color: rgba(0, 0, 0, 0.7);
+            color: white;
+            border-radius: 4px;
+            font-family: Arial, sans-serif;
+            font-size: 14px;
+            display: none;
+            pointer-events: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="info">使用滑鼠拖拉改變視角，滾輪縮放，滑鼠指向行星查看名稱</div>
+    <div id="planetInfo"></div>
+    <div id="controls" style="position: absolute; top: 10px; left: 10px; background-color: rgba(0, 0, 0, 0.7); color: white; padding: 10px; border-radius: 5px;">
+        <div>
+            <label for="speedSlider">運轉速度: </label>
+            <input type="range" id="speedSlider" min="0.1" max="5" step="0.1" value="1">
+            <span id="speedValue">1.0</span>x
+        </div>
+        <div style="margin-top: 5px; font-size: 12px;">
+            <label><input type="checkbox" id="realisticCheck" checked> 保持真實相對速度比例</label>
+        </div>
+    </div>
+    <script>
+        // 場景、相機和渲染器設置
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // 行星資料與真實的相對運轉速度
+        const planets = [
+            { name: "水星", radius: 0.38, distance: 5, color: 0xB7B8B9, baseSpeed: 0.4, rotationSpeed: 0.4, period: 88, textureUrl: null },
+            { name: "金星", radius: 0.95, distance: 7, color: 0xE6E6FA, baseSpeed: 0.3, rotationSpeed: 0.3, period: 225, textureUrl: null },
+            { name: "地球", radius: 1, distance: 10, color: 0x6B93D6, baseSpeed: 0.25, rotationSpeed: 0.25, period: 365, textureUrl: null },
+            { name: "火星", radius: 0.53, distance: 15, color: 0xE27B58, baseSpeed: 0.2, rotationSpeed: 0.2, period: 687, textureUrl: null },
+            { name: "木星", radius: 11.2, distance: 25, color: 0xC88B3A, baseSpeed: 0.15, rotationSpeed: 0.15, period: 4333, textureUrl: null },
+            { name: "土星", radius: 9.45, distance: 40, color: 0xEAD6B8, baseSpeed: 0.1, rotationSpeed: 0.1, period: 10759, textureUrl: null },
+            { name: "天王星", radius: 4.0, distance: 60, color: 0xCAF8FE, baseSpeed: 0.07, rotationSpeed: 0.07, period: 30687, textureUrl: null },
+            { name: "海王星", radius: 3.88, distance: 80, color: 0x5B5DDF, baseSpeed: 0.05, rotationSpeed: 0.05, period: 60190, textureUrl: null },
+        ];
+        
+        // 全局速度因子
+        let speedFactor = 1.0;
+
+        // 添加光源
+        const ambientLight = new THREE.AmbientLight(0x404040);
+        scene.add(ambientLight);
+
+        const sunLight = new THREE.PointLight(0xffffff, 1.5, 1000);
+        scene.add(sunLight);
+
+        // 創建太陽
+        const sunGeometry = new THREE.SphereGeometry(3, 32, 32);
+        const sunMaterial = new THREE.MeshBasicMaterial({
+            color: 0xffff00
+        });
+        const sun = new THREE.Mesh(sunGeometry, sunMaterial);
+        scene.add(sun);
+
+        // 創建行星和它們的軌道
+        const planetMeshes = [];
+        planets.forEach(planet => {
+            // 創建軌道
+            const orbitGeometry = new THREE.RingGeometry(planet.distance - 0.1, planet.distance + 0.1, 64);
+            const orbitMaterial = new THREE.MeshBasicMaterial({
+                color: 0x888888,
+                opacity: 0.3,
+                transparent: true,
+                side: THREE.DoubleSide
+            });
+            const orbit = new THREE.Mesh(orbitGeometry, orbitMaterial);
+            orbit.rotation.x = Math.PI / 2;
+            scene.add(orbit);
+
+            // 創建行星
+            const planetGeometry = new THREE.SphereGeometry(planet.radius * 0.3, 32, 32);
+            const planetMaterial = new THREE.MeshLambertMaterial({
+                color: planet.color
+            });
+            const planetMesh = new THREE.Mesh(planetGeometry, planetMaterial);
+            
+            // 設置行星位置
+            planetMesh.position.x = planet.distance;
+            planetMesh.userData = { planet: planet };
+            planetMeshes.push(planetMesh);
+            scene.add(planetMesh);
+            
+            // 如果是土星，添加環
+            if (planet.name === "土星") {
+                const ringGeometry = new THREE.RingGeometry(planet.radius * 0.4, planet.radius * 0.7, 32);
+                const ringMaterial = new THREE.MeshBasicMaterial({
+                    color: 0xEAD6B8,
+                    opacity: 0.7,
+                    transparent: true,
+                    side: THREE.DoubleSide
+                });
+                const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+                ring.rotation.x = Math.PI / 3;
+                planetMesh.add(ring);
+            }
+        });
+
+        // 添加星空背景
+        const starGeometry = new THREE.BufferGeometry();
+        const starMaterial = new THREE.PointsMaterial({
+            color: 0xFFFFFF,
+            size: 0.1
+        });
+
+        const starsCount = 5000;
+        const positions = new Float32Array(starsCount * 3);
+
+        for (let i = 0; i < starsCount * 3; i += 3) {
+            positions[i] = (Math.random() - 0.5) * 2000;
+            positions[i + 1] = (Math.random() - 0.5) * 2000;
+            positions[i + 2] = (Math.random() - 0.5) * 2000;
+        }
+
+        starGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+        const stars = new THREE.Points(starGeometry, starMaterial);
+        scene.add(stars);
+
+        // 設置相機位置
+        camera.position.z = 50;
+        camera.position.y = 30;
+        camera.lookAt(scene.position);
+
+        // 軌道控制器
+        let isDragging = false;
+        let previousMousePosition = {
+            x: 0,
+            y: 0
+        };
+
+        document.addEventListener('mousedown', (event) => {
+            isDragging = true;
+            previousMousePosition = {
+                x: event.clientX,
+                y: event.clientY
+            };
+        });
+
+        document.addEventListener('mouseup', () => {
+            isDragging = false;
+        });
+
+        document.addEventListener('mousemove', (event) => {
+            if (isDragging) {
+                const deltaMove = {
+                    x: event.clientX - previousMousePosition.x,
+                    y: event.clientY - previousMousePosition.y
+                };
+
+                const rotationSpeed = 0.005;
+                camera.position.x = camera.position.x * Math.cos(deltaMove.x * rotationSpeed) - camera.position.z * Math.sin(deltaMove.x * rotationSpeed);
+                camera.position.z = camera.position.z * Math.cos(deltaMove.x * rotationSpeed) + camera.position.x * Math.sin(deltaMove.x * rotationSpeed);
+
+                const yAxis = new THREE.Vector3(1, 0, 0);
+                const quaternion = new THREE.Quaternion().setFromAxisAngle(yAxis, -deltaMove.x * rotationSpeed);
+                camera.position.applyQuaternion(quaternion);
+
+                camera.position.y += deltaMove.y * rotationSpeed * 5;
+
+                camera.lookAt(scene.position);
+
+                previousMousePosition = {
+                    x: event.clientX,
+                    y: event.clientY
+                };
+            }
+
+            // 檢查滑鼠游標是否指向行星
+            checkPlanetHover(event);
+        });
+
+        document.addEventListener('wheel', (event) => {
+            const zoomSpeed = 0.1;
+            const zoomFactor = event.deltaY > 0 ? 1 + zoomSpeed : 1 - zoomSpeed;
+
+            // 限制相機距離範圍
+            const newDistance = camera.position.length() * zoomFactor;
+            if (newDistance > 5 && newDistance < 200) {
+                camera.position.multiplyScalar(zoomFactor);
+                camera.lookAt(scene.position);
+            }
+        });
+
+        // 滑鼠懸停顯示行星資訊
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        const planetInfo = document.getElementById('planetInfo');
+
+        function checkPlanetHover(event) {
+            // 將滑鼠位置轉換為標準化的裝置座標
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            // 更新射線與物體的交點
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(planetMeshes);
+
+            if (intersects.length > 0) {
+                const planet = intersects[0].object.userData.planet;
+                planetInfo.style.display = 'block';
+                planetInfo.style.left = event.clientX + 15 + 'px';
+                planetInfo.style.top = event.clientY + 'px';
+                planetInfo.innerHTML = `
+                    <div style="font-weight: bold;">${planet.name}</div>
+                    <div>半徑: ${planet.radius} (地球 = 1)</div>
+                    <div>距離太陽: ${planet.distance} 單位</div>
+                    <div>軌道周期: ${planet.period} 地球日</div>
+                `;
+            } else {
+                planetInfo.style.display = 'none';
+            }
+        }
+
+        // 速度控制器功能
+        const speedSlider = document.getElementById('speedSlider');
+        const speedValue = document.getElementById('speedValue');
+        const realisticCheck = document.getElementById('realisticCheck');
+        
+        // 更新速度顯示
+        speedSlider.addEventListener('input', function() {
+            speedFactor = parseFloat(this.value);
+            speedValue.textContent = speedFactor.toFixed(1);
+            
+            // 更新行星速度
+            updatePlanetSpeeds();
+        });
+        
+        // 真實比例切換
+        realisticCheck.addEventListener('change', function() {
+            updatePlanetSpeeds();
+        });
+        
+        // 更新行星速度函數
+        function updatePlanetSpeeds() {
+            if (realisticCheck.checked) {
+                // 使用真實的相對速度比例
+                planets.forEach((planet, index) => {
+                    // 將天文周期轉換為相對速度 (地球軌道周期 = 365天)
+                    planet.rotationSpeed = planet.baseSpeed * speedFactor;
+                });
+            } else {
+                // 所有行星使用相同的速度
+                planets.forEach((planet, index) => {
+                    planet.rotationSpeed = planet.baseSpeed * speedFactor;
+                });
+            }
+        }
+        
+        // 初始化速度
+        updatePlanetSpeeds();
+        
+        // 更新動畫
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // 行星繞太陽運轉
+            planetMeshes.forEach((planetMesh, index) => {
+                const planet = planets[index];
+                const angle = Date.now() * planet.rotationSpeed * 0.001;
+                planetMesh.position.x = Math.cos(angle) * planet.distance;
+                planetMesh.position.z = Math.sin(angle) * planet.distance;
+                
+                // 行星自轉
+                planetMesh.rotation.y += 0.01 * speedFactor;
+            });
+
+            renderer.render(scene, camera);
+        }
+
+        // 視窗大小調整
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
